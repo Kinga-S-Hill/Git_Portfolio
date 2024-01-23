@@ -1,0 +1,196 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Background
+
+I love hillshade so much. It adds so much dimension to a map. I typically play around with hillshade in ArcGIS Pro but R packages have come a long way recently so I wanted to try out some techniques for hillshading inside R. 
+
+I Followed this tutorial: <https://dominicroye.github.io/en/2022/hillshade-effects/> And this one: <https://dieghernan.github.io/202210_tidyterra-hillshade/>
+
+# Loack Packages
+```{r}
+#Packages
+if(!require("dplyr")) install.packages("dplyr") #
+if(!require("ggplot2")) install.packages("ggplot2") #
+if(!require("raster")) install.packages("raster")#
+if(!require("elevatr")) install.packages("elevatr")#
+if(!require("terra")) install.packages("terra")#
+if(!require("tidyterra")) install.packages("tidyterra")#
+if(!require("ggnewscale")) install.packages("ggnewscale") #
+if(!require("here")) install.packages("here")
+if(!require("tigris")) install.packages("tigris")#
+
+# packages
+library(sf)
+library(raster)
+library(elevatr)
+library(dplyr)
+library(ggplot2)
+library(terra)
+library(tidyterra)
+library(ggnewscale)
+library(tigris)
+```
+
+# Download state shapes
+```{r}
+# Get states geography. Filter out pacific islands
+states <- tigris::states(cb = TRUE) # cb = catographic boundary
+```
+
+```{r}
+# filter for your state
+state <- states |>
+  dplyr::filter(NAME =="North Carolina")
+
+plot(state)
+```
+
+# Download Elevation Data
+
+Use the shape of the state we just filtered as the location. The z-value is the zoom level and a 7 works well for US States.
+
+```{r}
+#Download elevation data using elevatr package
+elevation <- elevatr::get_elev_raster(locations = state, z = 7, clip = "bbox") |>
+  # And convert to terra format
+  terra::rast() |>
+  # Mask to the shape so the shape is exactly that of Nevada
+  raster::mask(terra::vect(state)) |>
+  #EPSG:6347 - NAD83 / UTM zone 18N
+  terra::project("EPSG:4326")
+  
+
+# Plot
+terra::plot(elevation)
+```
+
+```{r}
+# convert the raster into a data.frame of xyz
+elevation_df <- as.data.frame(elevation, xy = TRUE)
+
+# Rename z to "alt"
+names(elevation_df)[3] <- "alt"
+
+# Turn negative values to 0
+elevation_df <- elevation_df %>%
+  mutate(alt = pmax(0, alt))
+
+# first version of a map
+ggplot() +
+  geom_raster(data = elevation_df,
+              aes(x, y, fill = alt)) +
+  tidyterra::scale_fill_hypso_tint_c(breaks = seq(0, 2000, 400)) +
+  guides(fill = guide_colorsteps(barwidth = 10,
+                                 barheight = .5,
+                                 title.position = "right")) +
+  labs(fill = "m") +
+  coord_sf() +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+
+# Build Hillshade
+## Slope
+```{r}
+# estimate the slope
+slope <- terra::terrain(elevation, "slope", unit = "radians")
+plot(slope)
+```
+
+## Aspect
+```{r}
+# estimate the aspect or orientation
+aspect <- terra::terrain(elevation, "aspect", unit = "radians")
+plot(aspect)
+```
+
+## Hillshade
+```{r}
+# calculate the hillshade effect with 45º of elevation
+hillshade <- terra::shade(slope, aspect, 
+      angle = 45, 
+      direction = 300,
+      normalize= TRUE)
+
+# Palette
+pal_greys <- hcl.colors(1000, "Grays")
+
+#raw hillshade map 
+ggplot() +
+  geom_spatraster(data = hillshade, show.legend = FALSE) +
+  scale_fill_gradientn(colors = pal_greys, na.value = NA) +
+  theme_void() 
+```
+
+## Figure out elevation limits to guide plotting in ggplot
+```{r}
+
+# Min/Max limits of elevation
+elev_limits <- minmax(elevation) %>% as.vector()
+
+# Rounded to lower and upper 500
+elev_limits <- c(floor(elev_limits[1] / 500), ceiling(elev_limits[2] / 500)) * 500
+
+# And making min value to 0.
+elev_limits <- pmax(elev_limits, 0)
+
+# Compare
+minmax(elevation) %>% as.vector()
+elev_limits
+# 0 - 2000
+
+# Test plot with limits/ Try different palette colors from scale_fill_hypso_tint(). Palette colors are available here: https://dieghernan.github.io/tidyterra/reference/scale_hypso.html
+ggplot() +
+  geom_spatraster(data = elevation) +
+  scale_fill_hypso_tint_c(
+      limits = elev_limits,
+      palette = "spain"
+    ) +
+    theme_minimal()
+```
+
+```{r}
+ggplot() +# Add hillshade raster
+  geom_spatraster(data = hillshade,  show.legend =  FALSE) +
+  # Gray color scale for hillshade
+  scale_fill_gradientn(colors = pal_greys, na.value = NA) +
+  # Adds a new scale to ggplot so we can layer another raster
+  ggnewscale::new_scale_fill() +
+  # Add elevation raster
+  geom_spatraster(data = elevation, maxcell = Inf) +
+  scale_fill_hypso_tint_c(
+    limits = elev_limits,
+    palette = "utah_1",
+    alpha = 0.4,
+    # For the legend I use custom breaks
+    breaks = c(seq(0, 500, 100), seq(750, 1500, 250), 2000)) +
+  # Change legend guide
+  guides(fill = guide_legend(
+    title = "   m",
+    direction = "horizontal",
+    nrow = 1,
+    keywidth = 1.75,
+    keyheight = 0.5,
+    label.position = "bottom",
+    title.position = "right",
+    override.aes = list(alpha = 1)
+  )) +
+  theme_void() +
+  theme(
+    legend.position = "bottom",
+    legend.spacing.x = unit(0, "pt"),
+    # Transparent background for saving .png
+    panel.background = element_rect(fill='transparent', color = NA),
+    plot.background = element_rect(fill='transparent', color=NA),
+    legend.background = element_rect(fill='transparent', color = NA),
+    legend.box.background = element_rect(fill='transparent', color = NA)
+       )
+```
+
+# Save a .png
+```{r}
+ggsave(filename = here::here("Images", "NC_hillshade.png"),  width = 8, height = 6, dpi = 600, device = "png")
+```
