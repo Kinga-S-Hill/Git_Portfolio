@@ -4,7 +4,7 @@ This repository is a collection of R Markdown files that I use to build spatial 
 ## Project Files (in alphabetical order)
 
 ### 1. [Hillshade.Rmd](https://github.com/Kinga-S-Hill/Git_Portfolio/blob/main/Hillshade.Rmd)
-I follow a few tutorials to learn how to map a hillshade under elevation for a US State. 
+I combine a few tutorials to show how to map a hillshade under elevation for a US State. 
 
 <img src="https://github.com/Kinga-S-Hill/Git_Portfolio/blob/main/Images/NC_hillshade.png" width="600" height="300">
 
